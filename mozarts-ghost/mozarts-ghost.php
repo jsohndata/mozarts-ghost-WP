@@ -84,6 +84,11 @@ class MozartsGhostRedirector {
 
             // Add admin menu
             add_action('admin_menu', [$this, 'add_admin_menu']);
+
+            // Hide 'Add New' button on All Entries page
+            add_action('admin_head', [$this, 'hide_add_new_button']);
+    // ...existing code...
+
             
             // Add hooks for redirect handling
             add_action('template_redirect', [$this, 'handle_redirect']);
@@ -98,6 +103,16 @@ class MozartsGhostRedirector {
         }
     }
 
+    /**
+     * Hide 'Add New Ghost Entry' button on All Entries admin page
+     */
+    public function hide_add_new_button() {
+        global $pagenow;
+        if ($pagenow === 'edit.php' && isset($_GET['post_type']) && $_GET['post_type'] === $this->post_type) {
+            echo '<style>.page-title-action { display: none !important; }</style>';
+        }
+    }
+
     public function modify_read_more_link($more_link, $more_link_text): string {
         global $post;
         
@@ -108,18 +123,21 @@ class MozartsGhostRedirector {
         return $more_link;
     }
 
+    // Database version constant
+    private string $db_version = '1.0.0';
+
     public function activate_plugin(): void {
         try {
             mg_log('Starting activation');
-            
+
             global $wpdb;
-            
+
             if (!function_exists('dbDelta')) {
                 require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
             }
-            
+
             $charset_collate = $wpdb->get_charset_collate();
-            
+
             $sql = "CREATE TABLE IF NOT EXISTS {$this->table_name} (
                 id bigint(20) NOT NULL AUTO_INCREMENT,
                 post_id bigint(20) NOT NULL,
@@ -129,26 +147,48 @@ class MozartsGhostRedirector {
                 PRIMARY KEY  (id),
                 UNIQUE KEY shortcode (shortcode)
             ) $charset_collate;";
-            
+
             dbDelta($sql);
-            
+
             // Verify table creation
             $table_exists = $wpdb->get_var($wpdb->prepare(
                 "SHOW TABLES LIKE %s",
                 $this->table_name
             ));
-            
+
             if (!$table_exists) {
                 throw new Exception('Failed to create database table');
             }
-            
+
+            // Check and update database version
+            $stored_version = get_option('mozarts_ghost_db_version');
+            if ($stored_version !== $this->db_version) {
+                $this->update_database($stored_version);
+                update_option('mozarts_ghost_db_version', $this->db_version);
+            }
+
             mg_log('Activation completed');
-            
+
         } catch (Exception $e) {
             mg_log('Activation error: ' . $e->getMessage());
             deactivate_plugins(plugin_basename(__FILE__));
             wp_die('Plugin activation failed: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Update database structure if needed
+     * @param string|null $old_version
+     */
+    private function update_database(?string $old_version): void {
+        global $wpdb;
+        mg_log('Checking for database updates. Old version: ' . ($old_version ?? 'none'));
+
+        // Example: If upgrading from a previous version, run ALTER TABLE, etc.
+        // if ($old_version === '1.0.0') { ... }
+        // For now, just a placeholder for future upgrades
+        // Example: Add a column in future
+        // $wpdb->query("ALTER TABLE {$this->table_name} ADD COLUMN example_column varchar(100) DEFAULT '';");
     }
 
     public function register_post_type(): void {
@@ -221,13 +261,7 @@ class MozartsGhostRedirector {
                 "edit.php?post_type={$this->post_type}"
             );
 
-            add_submenu_page(
-                'mozarts-ghost',
-                'Add New',
-                'Add New',
-                'manage_options',
-                "post-new.php?post_type={$this->post_type}"
-            );
+            // ...existing code...
 
             mg_log('Admin menu added');
             
