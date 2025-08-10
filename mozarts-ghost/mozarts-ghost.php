@@ -2,11 +2,14 @@
 /**
  * Plugin Name: Mozart's Ghost Redirector
  * Description: Custom URL redirector with ghost URLs and shortcodes
- * Version: 1.0.3
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Author: Your Name
  * License: GPL v2 or later
+ *
+ * Changelog:
+ * - v1.1.0 (2025-08-10): Removed all 'new tab' references, cleaned up code, and ensured DB table adjusts on upgrade.
  */
 
 // Prevent direct access
