@@ -5,7 +5,7 @@
  * Version: 1.2.3
  * Requires at least: 6.0
  * Requires PHP: 8.0
- * Author: jsohndata
+ * Author: FireAIMedia
  * License: GPL v2 or later
  *
  * Changelog:

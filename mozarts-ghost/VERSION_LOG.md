@@ -20,20 +20,20 @@
 - Added sort functionality with up/down controls for redirects.
 - Implemented order_id column in database table.
 - Added version tracking for database updates.
-- Development assisted by ChatGPT 4.0.
+- Development assisted by ChatGPT 4o.
 
 ## v1.1.0 - August 10, 2025
 - Removed all references to 'new tab' and related UI from plugin and admin pages.
 - Cleaned up placeholder comments from codebase.
 - Database table now automatically drops 'new_tab' column on upgrade.
 - Improved code clarity and maintainability.
-- Development assisted by ChatGPT 4.0.
+- Development assisted by ChatGPT 4o.
 
 ## v0.1.0 - August 10, 2025
 - Initial version log created.
 - General plugin structure established.
 - Core PHP files added: `mozarts-ghost.php`, `uninstaller.php`.
-
+- Development assisted by ChatGPT 4.0
 ---
 
 Future updates will be logged here, focusing on major changes and general improvements.
