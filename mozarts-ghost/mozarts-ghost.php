@@ -1,14 +1,18 @@
-<?php
+    <?php
 /**
  * Plugin Name: Mozart's Ghost Redirector
  * Description: Custom URL redirector with ghost URLs and shortcodes
- * Version: 1.1.0
+ * Version: 1.2.3
  * Requires at least: 6.0
  * Requires PHP: 8.0
- * Author: Your Name
+ * Author: jsohndata
  * License: GPL v2 or later
  *
  * Changelog:
+ * - v1.2.3 (2025-08-10): Fixed bug with redirects not respecting custom sort order.
+ * - v1.2.2 (2025-08-10): Fixed issue with order_id values showing as 0 in admin UI.
+ * - v1.2.1 (2025-08-10): Fixed ordering bugs, improved error handling for sort operations.
+ * - v1.2.0 (2025-08-10): Added sort functionality with up/down controls.
  * - v1.1.0 (2025-08-10): Removed all 'new tab' references, cleaned up code, and ensured DB table adjusts on upgrade.
  */
 
@@ -126,7 +130,7 @@ class MozartsGhostRedirector {
     }
 
     // Database version constant
-    private string $db_version = '1.0.1';
+    private string $db_version = '1.2.3';
 
     public function activate_plugin(): void {
         try {
@@ -145,6 +149,7 @@ class MozartsGhostRedirector {
                 post_id bigint(20) NOT NULL,
                 shortcode varchar(50) NOT NULL,
                 target_url varchar(255) NOT NULL,
+                order_id int(11) NOT NULL,
                 PRIMARY KEY  (id),
                 UNIQUE KEY shortcode (shortcode)
             ) $charset_collate;";
@@ -194,6 +199,23 @@ class MozartsGhostRedirector {
             if (!empty($columns)) {
                 $wpdb->query("ALTER TABLE {$this->table_name} DROP COLUMN new_tab;");
                 mg_log("Dropped 'new_tab' column from table.");
+            }
+        }
+
+        // Add order_id column if upgrading from previous version
+        if ($old_version && version_compare($old_version, '1.2.0', '<')) {
+            $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'order_id'");
+            if (empty($columns)) {
+                $wpdb->query("ALTER TABLE {$this->table_name} ADD COLUMN order_id int(11) NOT NULL DEFAULT 0;");
+                mg_log("Added 'order_id' column to table.");
+                // Initialize order_id values based on id order
+                $redirects = $wpdb->get_results("SELECT id FROM {$this->table_name} ORDER BY id ASC");
+                $order = 1;
+                foreach ($redirects as $redirect) {
+                    $wpdb->update($this->table_name, ['order_id' => $order], ['id' => $redirect->id]);
+                    $order++;
+                }
+                mg_log("Initialized 'order_id' values.");
             }
         }
     }
@@ -277,18 +299,87 @@ class MozartsGhostRedirector {
         }
     }
 
+    /**
+     * Ensures all redirects have valid order_id values
+     * Fixes any entries with order_id = 0
+     */
+    private function repair_order_values(): void {
+        global $wpdb;
+        
+        // Check for any records with order_id = 0
+        $invalid_orders = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE order_id = 0");
+        
+        if ($invalid_orders > 0) {
+            mg_log("Found {$invalid_orders} records with invalid order_id values. Repairing...");
+            
+            // Get all redirects ordered by ID
+            $redirects = $wpdb->get_results("SELECT id FROM {$this->table_name} ORDER BY id ASC");
+            
+            // Reassign order_id values sequentially
+            $order = 1;
+            foreach ($redirects as $redirect) {
+                $wpdb->update($this->table_name, ['order_id' => $order], ['id' => $redirect->id]);
+                $order++;
+            }
+            
+            mg_log("Order values repaired. Assigned sequential order_id values to " . ($order-1) . " records.");
+        }
+    }
+    
     public function display_redirects_page(): void {
         global $wpdb;
+        
+        // Repair any invalid order values before proceeding
+        $this->repair_order_values();
         
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (isset($_POST['add_redirect']) && check_admin_referer('mozarts_ghost_action', 'mozarts_ghost_nonce')) {
                 $this->create_redirect($_POST);
             } elseif (isset($_POST['delete_redirect']) && check_admin_referer('mozarts_ghost_action', 'mozarts_ghost_nonce')) {
                 $this->delete_redirect((int)$_POST['redirect_id']);
+            } elseif (isset($_POST['move_up']) && check_admin_referer('mozarts_ghost_action', 'mozarts_ghost_nonce')) {
+                $id = (int)$_POST['redirect_id'];
+                $order_id = (int)$_POST['order_id'];
+                
+                // Server-side validation - prevent moving up if already at the top
+                if ($order_id <= 1) {
+                    mg_log("Prevented moving up item already at the top (order_id: {$order_id})");
+                    // Add admin notice
+                    add_action('admin_notices', function() {
+                        echo '<div class="notice notice-warning is-dismissible"><p>Cannot move item up: already at the top.</p></div>';
+                    });
+                    // Skip the operation
+                } else {
+                    $prev = $wpdb->get_row($wpdb->prepare("SELECT id FROM {$this->table_name} WHERE order_id = %d", $order_id - 1));
+                    if ($prev) {
+                        $this->swap_order($id, $prev->id);
+                    }
+                }
+            } elseif (isset($_POST['move_down']) && check_admin_referer('mozarts_ghost_action', 'mozarts_ghost_nonce')) {
+                $id = (int)$_POST['redirect_id'];
+                $order_id = (int)$_POST['order_id'];
+                
+                // Get total count for server-side validation
+                $total_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+                
+                // Server-side validation - prevent moving down if already at the bottom
+                if ($order_id >= $total_count) {
+                    mg_log("Prevented moving down item already at the bottom (order_id: {$order_id}, total: {$total_count})");
+                    // Add admin notice
+                    add_action('admin_notices', function() {
+                        echo '<div class="notice notice-warning is-dismissible"><p>Cannot move item down: already at the bottom.</p></div>';
+                    });
+                    // Skip the operation
+                } else {
+                    $next = $wpdb->get_row($wpdb->prepare("SELECT id FROM {$this->table_name} WHERE order_id = %d", $order_id + 1));
+                    if ($next) {
+                        $this->swap_order($id, $next->id);
+                    }
+                }
             }
         }
 
-        $redirects = $wpdb->get_results("SELECT * FROM {$this->table_name}");
+    $redirects = $wpdb->get_results("SELECT * FROM {$this->table_name} ORDER BY order_id ASC");
         ?>
         <div class="wrap">
             <h1>Mozart's Ghost Redirects</h1>
@@ -314,26 +405,32 @@ class MozartsGhostRedirector {
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                     <tr>
+                        <th style='width:60px;'>Order</th>
                         <th>Shortcode</th>
                         <th>Ghost URL</th>
                         <th>Target URL</th>
-                        
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($redirects as $redirect): ?>
                         <tr>
+                            <td><?php echo esc_html($redirect->order_id); ?></td>
                             <td><?php echo esc_html($redirect->shortcode); ?></td>
                             <td><?php echo esc_url($this->get_ghost_url($redirect->shortcode)); ?></td>
                             <td><?php echo esc_url($redirect->target_url); ?></td>
-                            
                             <td>
+                                <form method="post" style="display:inline; margin-right:4px;">
+                                    <?php wp_nonce_field('mozarts_ghost_action', 'mozarts_ghost_nonce'); ?>
+                                    <input type="hidden" name="redirect_id" value="<?php echo $redirect->id; ?>" />
+                                    <input type="hidden" name="order_id" value="<?php echo $redirect->order_id; ?>" />
+                                    <button type="submit" name="move_up" class="button button-small" title="Move Up" <?php if ($redirect->order_id == 1) echo 'disabled'; ?>>↑</button>
+                                    <button type="submit" name="move_down" class="button button-small" title="Move Down" <?php if ($redirect->order_id == count($redirects)) echo 'disabled'; ?>>↓</button>
+                                </form>
                                 <form method="post" style="display:inline;">
                                     <?php wp_nonce_field('mozarts_ghost_action', 'mozarts_ghost_nonce'); ?>
                                     <input type="hidden" name="redirect_id" value="<?php echo $redirect->id; ?>" />
-                                    <input type="submit" name="delete_redirect" class="button button-small" value="Delete" 
-                                           onclick="return confirm('Are you sure?');" />
+                                    <button type="submit" name="delete_redirect" class="button button-small" onclick="return confirm('Are you sure?');">Delete</button>
                                 </form>
                             </td>
                         </tr>
@@ -366,14 +463,19 @@ class MozartsGhostRedirector {
                 throw new Exception($post_id->get_error_message());
             }
             
+            // Get the highest order_id value and add 1 for the new redirect
+            $max_order = $wpdb->get_var("SELECT MAX(order_id) FROM {$this->table_name}");
+            $new_order = is_null($max_order) ? 1 : (int)$max_order + 1;
+            
             $result = $wpdb->insert(
                 $this->table_name,
                 [
                     'post_id' => $post_id,
                     'shortcode' => sanitize_text_field($data['shortcode']),
-                    'target_url' => esc_url_raw($data['target_url'])
+                    'target_url' => esc_url_raw($data['target_url']),
+                    'order_id' => $new_order
                 ],
-                ['%d', '%s', '%s']
+                ['%d', '%s', '%s', '%d']
             );
             
             if ($result === false) {
@@ -381,7 +483,7 @@ class MozartsGhostRedirector {
                 throw new Exception($wpdb->last_error);
             }
             
-            mg_log('Redirect created');
+            mg_log('Redirect created with order_id: ' . $new_order);
             return true;
             
         } catch (Exception $e) {
@@ -396,22 +498,59 @@ class MozartsGhostRedirector {
             
             global $wpdb;
             
+            // Get the order_id of the redirect to be deleted
             $redirect = $wpdb->get_row($wpdb->prepare(
-                "SELECT post_id FROM {$this->table_name} WHERE id = %d",
+                "SELECT post_id, order_id FROM {$this->table_name} WHERE id = %d",
                 $id
             ));
             
             if ($redirect) {
+                $deleted_order_id = $redirect->order_id;
+                
+                // Delete the post
                 wp_delete_post($redirect->post_id, true);
+                
+                // Delete the redirect record
                 $wpdb->delete($this->table_name, ['id' => $id], ['%d']);
+                
+                // Update order_id values for all redirects with higher order_id
+                $wpdb->query($wpdb->prepare(
+                    "UPDATE {$this->table_name} SET order_id = order_id - 1 WHERE order_id > %d",
+                    $deleted_order_id
+                ));
+                
+                mg_log('Redirect deleted and order_id values updated');
             }
             
-            mg_log('Redirect deleted');
             return true;
             
         } catch (Exception $e) {
             mg_log('Delete redirect error: ' . $e->getMessage());
             return false;
+        }
+    }
+    
+    /**
+     * Swap order_id between two redirects
+     * @param int $id1
+     * @param int $id2
+     */
+    private function swap_order($id1, $id2): void {
+        global $wpdb;
+        $row1 = $wpdb->get_row($wpdb->prepare("SELECT order_id FROM {$this->table_name} WHERE id = %d", $id1));
+        $row2 = $wpdb->get_row($wpdb->prepare("SELECT order_id FROM {$this->table_name} WHERE id = %d", $id2));
+        
+        if ($row1 && $row2) {
+            // Log the current values before swapping
+            mg_log("Before swap: ID {$id1} has order_id {$row1->order_id}, ID {$id2} has order_id {$row2->order_id}");
+            
+            // Perform the swap
+            $wpdb->update($this->table_name, ['order_id' => $row2->order_id], ['id' => $id1]);
+            $wpdb->update($this->table_name, ['order_id' => $row1->order_id], ['id' => $id2]);
+            
+            mg_log("After swap: ID {$id1} now has order_id {$row2->order_id}, ID {$id2} now has order_id {$row1->order_id}");
+        } else {
+            mg_log("Error: Could not swap order_id between ID {$id1} and ID {$id2}. One or both records not found.");
         }
     }
 
@@ -427,9 +566,9 @@ class MozartsGhostRedirector {
             
             $shortcode = sanitize_text_field($_GET['on']);
             
-            // First, get all redirects ordered by ID
+            // Get all redirects ordered by order_id (not by ID)
             $redirects = $wpdb->get_results(
-                "SELECT id, shortcode, target_url FROM {$this->table_name} ORDER BY id ASC"
+                "SELECT id, shortcode, target_url, order_id FROM {$this->table_name} ORDER BY order_id ASC"
             );
             
             if (!$redirects) {
@@ -454,6 +593,8 @@ class MozartsGhostRedirector {
             
             // Get the target URL for redirect
             $target_url = $redirects[$next_position]->target_url;
+            
+            mg_log("Redirect sequence: {$redirects[$current_position]->shortcode} (order_id: {$redirects[$current_position]->order_id}) -> {$redirects[$next_position]->shortcode} (order_id: {$redirects[$next_position]->order_id})");
             
             if ($target_url) {
                 mg_log('Redirecting to next URL: ' . $target_url);
