@@ -87,7 +87,6 @@ class MozartsGhostRedirector {
 
             // Hide 'Add New' button on All Entries page
             add_action('admin_head', [$this, 'hide_add_new_button']);
-    // ...existing code...
 
             
             // Add hooks for redirect handling
@@ -124,7 +123,7 @@ class MozartsGhostRedirector {
     }
 
     // Database version constant
-    private string $db_version = '1.0.0';
+    private string $db_version = '1.0.1';
 
     public function activate_plugin(): void {
         try {
@@ -143,7 +142,6 @@ class MozartsGhostRedirector {
                 post_id bigint(20) NOT NULL,
                 shortcode varchar(50) NOT NULL,
                 target_url varchar(255) NOT NULL,
-                new_tab tinyint(1) DEFAULT 0,
                 PRIMARY KEY  (id),
                 UNIQUE KEY shortcode (shortcode)
             ) $charset_collate;";
@@ -187,8 +185,14 @@ class MozartsGhostRedirector {
         // Example: If upgrading from a previous version, run ALTER TABLE, etc.
         // if ($old_version === '1.0.0') { ... }
         // For now, just a placeholder for future upgrades
-        // Example: Add a column in future
-        // $wpdb->query("ALTER TABLE {$this->table_name} ADD COLUMN example_column varchar(100) DEFAULT '';");
+        // Remove 'new_tab' column if upgrading from previous version
+        if ($old_version && version_compare($old_version, '1.0.1', '<')) {
+            $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'new_tab'");
+            if (!empty($columns)) {
+                $wpdb->query("ALTER TABLE {$this->table_name} DROP COLUMN new_tab;");
+                mg_log("Dropped 'new_tab' column from table.");
+            }
+        }
     }
 
     public function register_post_type(): void {
@@ -261,7 +265,7 @@ class MozartsGhostRedirector {
                 "edit.php?post_type={$this->post_type}"
             );
 
-            // ...existing code...
+            
 
             mg_log('Admin menu added');
             
@@ -298,10 +302,7 @@ class MozartsGhostRedirector {
                         <th><label for="target_url">Target URL</label></th>
                         <td><input type="url" name="target_url" required /></td>
                     </tr>
-                    <tr>
-                        <th><label for="new_tab">Open in New Tab</label></th>
-                        <td><input type="checkbox" name="new_tab" value="1" /></td>
-                    </tr>
+                    
                 </table>
                 <input type="submit" name="add_redirect" class="button button-primary" value="Add Redirect" />
             </form>
@@ -313,7 +314,7 @@ class MozartsGhostRedirector {
                         <th>Shortcode</th>
                         <th>Ghost URL</th>
                         <th>Target URL</th>
-                        <th>New Tab</th>
+                        
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -323,7 +324,7 @@ class MozartsGhostRedirector {
                             <td><?php echo esc_html($redirect->shortcode); ?></td>
                             <td><?php echo esc_url($this->get_ghost_url($redirect->shortcode)); ?></td>
                             <td><?php echo esc_url($redirect->target_url); ?></td>
-                            <td><?php echo $redirect->new_tab ? 'Yes' : 'No'; ?></td>
+                            
                             <td>
                                 <form method="post" style="display:inline;">
                                     <?php wp_nonce_field('mozarts_ghost_action', 'mozarts_ghost_nonce'); ?>
@@ -367,10 +368,9 @@ class MozartsGhostRedirector {
                 [
                     'post_id' => $post_id,
                     'shortcode' => sanitize_text_field($data['shortcode']),
-                    'target_url' => esc_url_raw($data['target_url']),
-                    'new_tab' => isset($data['new_tab']) ? 1 : 0
+                    'target_url' => esc_url_raw($data['target_url'])
                 ],
-                ['%d', '%s', '%s', '%d']
+                ['%d', '%s', '%s']
             );
             
             if ($result === false) {
