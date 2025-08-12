@@ -1,3 +1,5 @@
+![Screenshot of WooCommerce Dual-Unit Dimensions](images/screen.webp)
+
 # Mozart’s Ghost – WordPress Plugin
 
 **A nostalgic nod to a hidden gem from the 1995 Sandra Bullock film *The Net* — reimagined with AI-assisted development for the WordPress era.**
